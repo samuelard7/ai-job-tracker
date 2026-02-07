@@ -1,7 +1,11 @@
 import { StateGraph, END } from '@langchain/langgraph';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 
-const llm = new ChatGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+import dotenv from 'dotenv';
+dotenv.config();
+
+const llm = new ChatGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY,
+  model: 'gemini-pro', });
 
 // Example tool
 async function updateFilter(filters) {

@@ -1,19 +1,46 @@
 import fastify from 'fastify';
+import multer from 'multer';
+// import * as pdfParse from 'pdf-parse';
+import { readFile } from 'fs/promises';
 import cors from '@fastify/cors';
 import dotenv from 'dotenv';
 import fs from 'fs/promises';
 import path from 'path';
 import axios from 'axios';
-
+import * as pdfParse from 'pdf-parse';
 import { matchJob } from './matching.js';
-import { runnable } from './assistant.js';
+import { runnable } from './assistant.js';  
 
-dotenv.config();
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const app = fastify({ logger: true });
+
+await app.register(import('@fastify/multipart'), {
+  limits: {
+    fileSize: 2 * 1024 * 1024,          // ← only 2 MB max (resumes rarely need more)
+    files: 1,                           // only one file
+  }
+});
+
+// Then cors and other plugins
 await app.register(cors, { origin: '*' });
 
-// Sample route
+// Now all other routes...
+dotenv.config();
+//  
+const PDFParser = require('pdf2json');
+const pdfParser = new PDFParser();
+
+pdfParser.on('pdfParser_dataError', errData => console.error(errData.parserError));
+pdfParser.on('pdfParser_dataReady', pdfData => {
+  resumeText = pdfParser.getRawTextContent();
+  // continue saving...
+});
+
+pdfParser.loadPDF(buffer); // or use stream
+
+
 app.get('/', async (request, reply) => {
   return { message: 'Backend ready' };
 });
@@ -47,12 +74,60 @@ app.get('/jobs', async (request, reply) => {
 });
 
 app.post('/upload-resume', async (request, reply) => {
-  const { userId, resumeText } = request.body;
-  let data = await loadData();
-  if (!data.users[userId]) data.users[userId] = {};
-  data.users[userId].resume = resumeText;
-  await saveData(data);
-  return { success: true };
+  console.log('[upload] Request incoming');
+
+  const timeout = setTimeout(() => {
+    console.log('[upload] TIMEOUT - handler taking too long');
+    reply.code(504).send({ error: 'Processing timeout - try smaller file' });
+  }, 30000); // 30 seconds
+
+  try {
+    const resumeFile = await request.file();
+
+    if (!resumeFile) {
+      clearTimeout(timeout);
+      return reply.code(400).send({ error: 'No file received' });
+    }
+
+    console.log('[upload] File detected:', resumeFile.fieldname, resumeFile.mimetype);
+
+    const buffer = await resumeFile.toBuffer();
+    console.log('[upload] Buffer ready, size:', buffer.length);
+
+    let resumeText = '';
+
+   // Inside the try block, replace the PDF block with:
+
+if (resumeFile.mimetype === 'application/pdf') {
+  console.log('[upload] SKIPPING real PDF parse for debug');
+  resumeText = "This is dummy resume text. Real parsing was too slow or failed.";
+} else if (resumeFile.mimetype.startsWith('text/')) {
+  resumeText = buffer.toString('utf-8');
+} else {
+  clearTimeout(timeout);
+  return reply.code(400).send({ error: 'Only PDF or TXT allowed' });
+}
+
+    console.log('[upload] Cleaning text...');
+    resumeText = resumeText.replace(/\s+/g, ' ').trim();
+
+    console.log('[upload] Loading/saving data...');
+    let data = await loadData();
+    if (!data.users[request.body.userId]) data.users[request.body.userId] = {};
+    data.users[request.body.userId].resume = resumeText;
+    await saveData(data);
+
+    clearTimeout(timeout);
+    console.log('[upload] All done - sending response');
+    return { success: true, message: 'Resume processed' };
+  } catch (err) {
+    clearTimeout(timeout);
+    console.error('[upload] CRASH:', err.message, err.stack);
+    return reply.code(500).send({ 
+      error: 'Processing failed',
+      details: err.message 
+    });
+  }
 });
 
 app.post('/apply', async (request, reply) => {
